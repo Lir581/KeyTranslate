@@ -2,13 +2,17 @@
 
 A small Windows app for translating selected text.
 
-## Use
+## Download and run
 
-1. Run `KeyTranslate.exe`.
-2. Choose the source and target languages, then click **Save settings**.
-3. Select text in any app and press `F8`.
+1. Install the **.NET 10 Desktop Runtime for Windows x64** from the [official Microsoft download page](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). Choose **.NET Desktop Runtime** (not the SDK or ASP.NET Core Runtime).
+2. Download the `KeyTranslate` ZIP from Releases and extract it.
+3. Keep all files together and run `KeyTranslate.exe`.
+4. Choose the source and target languages, then click **Save settings**.
+5. Select text in any app and press `F8`.
 
 Automatic translation is off by default. Toggle it with `F7`, the button in the app, or the tray menu. Set the delay from 1 to 30 seconds in the app.
+
+The release ZIP contains the application files, but not the .NET Runtime. Do not download only `KeyTranslate.exe`; keep the extracted files together.
 
 ## Build
 
