@@ -4,7 +4,7 @@ A small Windows app for translating selected text.
 
 ## Download and run
 
-1. Install the **.NET 10 Desktop Runtime for Windows x64** from the [official Microsoft download page](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). Choose **.NET Desktop Runtime** (not the SDK or ASP.NET Core Runtime).
+1. Install the **.NET 10 Desktop Runtime for Windows x64** from the [official Microsoft download page](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). Choose **.NET Desktop Runtime** 
 2. Download the `KeyTranslate` ZIP from Releases and extract it.
 3. Keep all files together and run `KeyTranslate.exe`.
 4. Choose the source and target languages, then click **Save settings**.
