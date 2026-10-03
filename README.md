@@ -1,6 +1,11 @@
-# KeyTranslate
+# KeyTranslate 
 
-A small Windows app for translating selected text.
+## Overview
+ 
+KeyTranslate is a Windows utility for translating text without switching applications.
+ 
+- Press F8 (or a custom hotkey) to translate selected text.
+- Enable Auto Translate (F7) to automatically translate text after a configurable delay while typing.
 
 ## Download and run
 
