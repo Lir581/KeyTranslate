@@ -16,7 +16,6 @@ internal sealed class MainForm : Form
     private const uint ModWin = 0x0008;
     private const uint KeyUpFlag = 0x0002;
     private const string SettingsFile = "keytranslate.json";
-    private const string TranslationCacheFile = "translation-cache.json";
     private const string LanguagePlaceholder = "Choose a language...";
     private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string StartupValueName = "KeyTranslate";
@@ -29,6 +28,7 @@ internal sealed class MainForm : Form
     private readonly Label statusDot = new();
     private readonly Button saveButton = new();
     private readonly NotifyIcon trayIcon = new();
+    private Icon? applicationIcon;
     private readonly ContextMenuStrip trayMenu = new();
     private readonly ToolStripMenuItem autoTranslateMenuItem = new("Automatic translation");
     private readonly ToolStripMenuItem delayMenu = new("Auto-translate delay");
@@ -55,15 +55,13 @@ internal sealed class MainForm : Form
     private bool busy;
     private bool exitRequested;
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
-    private readonly Dictionary<string, string> translationCache = new(StringComparer.Ordinal);
-    private readonly object cacheLock = new();
 
     [DllImport("user32.dll", SetLastError = true)] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
     [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc callback, IntPtr module, uint threadId);
     [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
     [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
@@ -77,7 +75,6 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         settings = LoadSettings();
-        LoadTranslationCache();
         Text = "KeyTranslate";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(650, 580);
@@ -100,7 +97,7 @@ internal sealed class MainForm : Form
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 78)); outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 62)); Controls.Add(outer);
         var header = new Panel { Dock = DockStyle.Fill };
         header.Controls.Add(new Label { Text = "KeyTranslate", Font = new Font("Segoe UI", 25, FontStyle.Bold), ForeColor = Color.FromArgb(21, 33, 59), AutoSize = true, Location = new Point(0, 0) });
-        header.Controls.Add(new Label { Text = "Fast translation for selected text · local cache first", ForeColor = Color.FromArgb(100, 112, 138), AutoSize = true, Location = new Point(2, 45) }); outer.Controls.Add(header, 0, 0);
+        header.Controls.Add(new Label { Text = "Translate text without leaving your app", ForeColor = Color.FromArgb(100, 112, 138), AutoSize = true, Location = new Point(2, 45) }); outer.Controls.Add(header, 0, 0);
 
         var content = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1, Padding = new Padding(0, 6, 0, 12) }; outer.Controls.Add(content, 0, 1);
         var settingsCard = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(22), ColumnCount = 1, RowCount = 11 };
@@ -115,7 +112,7 @@ internal sealed class MainForm : Form
         delayBox.ValueChanged += (_, _) => settings.DelaySeconds = (int)delayBox.Value;
         delayPanel.Controls.Add(delayBox);
         settingsCard.Controls.Add(delayPanel, 0, 7);
-        autoToggleButton.Text = "AutoTranslate"; autoToggleButton.Dock = DockStyle.Fill; autoToggleButton.Height = 38; autoToggleButton.Margin = new Padding(0, 14, 0, 8); autoToggleButton.FlatStyle = FlatStyle.Flat; autoToggleButton.FlatAppearance.BorderColor = Color.FromArgb(190, 202, 230); autoToggleButton.Click += (_, _) => ToggleAutoTranslate(); UpdateAutoButton(); settingsCard.Controls.Add(autoToggleButton, 0, 8);
+        autoToggleButton.Dock = DockStyle.Fill; autoToggleButton.Height = 38; autoToggleButton.Margin = new Padding(0, 14, 0, 8); autoToggleButton.FlatStyle = FlatStyle.Flat; autoToggleButton.Font = new Font("Segoe UI", 10, FontStyle.Bold); autoToggleButton.Click += (_, _) => ToggleAutoTranslate(); UpdateAutoButton(); settingsCard.Controls.Add(autoToggleButton, 0, 8);
         startupCheckBox.Text = "Run KeyTranslate when Windows starts";
         startupCheckBox.Checked = settings.RunAtStartup;
         startupCheckBox.AutoSize = true;
@@ -131,7 +128,9 @@ internal sealed class MainForm : Form
         statusDot.Location = new Point(16, 10);
         status.Text = string.IsNullOrWhiteSpace(settings.Source) || string.IsNullOrWhiteSpace(settings.Target)
             ? "Choose source and target languages, then save settings"
-            : $"Ready · press {settings.Hotkey} after selecting text";
+            : settings.AutoTranslate
+                ? $"Ready · auto-translate is on · {settings.DelaySeconds} sec pause"
+                : $"Ready · press {settings.Hotkey} after selecting text";
         status.ForeColor = Color.FromArgb(41, 65, 108);
         status.AutoSize = true;
         status.Location = new Point(40, 14);
@@ -170,8 +169,10 @@ internal sealed class MainForm : Form
         }
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Exit KeyTranslate", null, (_, _) => ExitApplication());
-        trayIcon.Icon = SystemIcons.Application;
-        trayIcon.Text = "KeyTranslate · translation is active";
+        applicationIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+            ?? throw new InvalidOperationException("Could not load the KeyTranslate application icon.");
+        trayIcon.Icon = applicationIcon;
+        trayIcon.Text = $"KeyTranslate · press {settings.Hotkey} to translate";
         trayIcon.ContextMenuStrip = trayMenu;
         trayIcon.DoubleClick += (_, _) => ShowFromTray();
         trayIcon.Visible = true;
@@ -189,6 +190,7 @@ internal sealed class MainForm : Form
             if (keyboardHook != IntPtr.Zero) UnhookWindowsHookEx(keyboardHook);
             trayIcon.Visible = false;
             trayIcon.Dispose();
+            applicationIcon?.Dispose();
             UnregisterHotKey(Handle, HotkeyId); UnregisterHotKey(Handle, AutoToggleHotkeyId);
         }
     }
@@ -324,6 +326,8 @@ internal sealed class MainForm : Form
     {
         autoToggleButton.Text = settings.AutoTranslate ? "Auto-translate: ON" : "Auto-translate: OFF";
         autoToggleButton.BackColor = settings.AutoTranslate ? Color.FromArgb(234, 240, 255) : Color.White;
+        autoToggleButton.ForeColor = settings.AutoTranslate ? Color.FromArgb(36, 87, 230) : Color.FromArgb(83, 97, 122);
+        autoToggleButton.FlatAppearance.BorderColor = settings.AutoTranslate ? Color.FromArgb(128, 157, 230) : Color.FromArgb(190, 202, 230);
         autoTranslateMenuItem.Checked = settings.AutoTranslate;
     }
 
@@ -344,40 +348,6 @@ internal sealed class MainForm : Form
 
     private void SaveSettings() => File.WriteAllText(Path.Combine(AppContext.BaseDirectory, SettingsFile), JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
 
-    private void LoadTranslationCache()
-    {
-        try
-        {
-            var path = Path.Combine(AppContext.BaseDirectory, TranslationCacheFile);
-            var loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path));
-            if (loaded is null) return;
-            lock (cacheLock)
-            {
-                foreach (var pair in loaded)
-                    translationCache[pair.Key] = pair.Value;
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private void SaveTranslationCache()
-    {
-        try
-        {
-            Dictionary<string, string> snapshot;
-            lock (cacheLock) snapshot = new(translationCache);
-            var path = Path.Combine(AppContext.BaseDirectory, TranslationCacheFile);
-            var temporaryPath = path + ".tmp";
-            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
-            File.Move(temporaryPath, path, true);
-        }
-        catch
-        {
-        }
-    }
-
     private async Task TranslateSelectionAsync(bool autoSelect = false)
     {
         if (busy)
@@ -392,39 +362,137 @@ internal sealed class MainForm : Form
         busy = true;
         var previousClipboard = string.Empty;
         var clipboardWasChanged = false;
+        uint ownedClipboardSequence = 0;
+        string? ownedClipboardText = null;
         SetStatus("Translating selection…", null);
 
         try
         {
             var sourceWindow = GetForegroundWindow();
+            if (sourceWindow == IntPtr.Zero || sourceWindow == Handle)
+                throw new InvalidOperationException("Switch to the app containing the text you want to translate.");
+
             await WaitForHotkeyReleaseAsync();
-            if (sourceWindow != IntPtr.Zero && sourceWindow != Handle) SetForegroundWindow(sourceWindow);
+            if (GetForegroundWindow() != sourceWindow)
+            {
+                SetStatus("Focus changed before selection; translation canceled.", false);
+                return;
+            }
+
             await Task.Delay(60);
+            if (GetForegroundWindow() != sourceWindow)
+            {
+                SetStatus("Focus changed before selection; translation canceled.", false);
+                return;
+            }
+
             if (autoSelect)
             {
+                keybd_event(0x11, 0, 0, UIntPtr.Zero);
+                keybd_event(0x26, 0, 0, UIntPtr.Zero);
+                keybd_event(0x26, 0, KeyUpFlag, UIntPtr.Zero);
+                keybd_event(0x11, 0, KeyUpFlag, UIntPtr.Zero);
+                keybd_event(0x11, 0, 0, UIntPtr.Zero);
                 keybd_event(0x10, 0, 0, UIntPtr.Zero);
-                keybd_event(0x24, 0, 0, UIntPtr.Zero);
-                keybd_event(0x24, 0, KeyUpFlag, UIntPtr.Zero);
+                keybd_event(0x28, 0, 0, UIntPtr.Zero);
+                keybd_event(0x28, 0, KeyUpFlag, UIntPtr.Zero);
                 keybd_event(0x10, 0, KeyUpFlag, UIntPtr.Zero);
+                keybd_event(0x11, 0, KeyUpFlag, UIntPtr.Zero);
                 await Task.Delay(100);
+            }
+
+            if (GetForegroundWindow() != sourceWindow)
+            {
+                SetStatus("Focus changed before text could be copied; translation canceled.", false);
+                return;
             }
 
             previousClipboard = Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty;
             Clipboard.Clear();
             clipboardWasChanged = true;
+            ownedClipboardSequence = GetClipboardSequenceNumber();
             keybd_event(0x11, 0, 0, UIntPtr.Zero);
             keybd_event(0x43, 0, 0, UIntPtr.Zero);
             keybd_event(0x43, 0, KeyUpFlag, UIntPtr.Zero);
             keybd_event(0x11, 0, KeyUpFlag, UIntPtr.Zero);
             await Task.Delay(140);
 
+            if (GetForegroundWindow() != sourceWindow)
+            {
+                SetStatus("Focus changed before text could be copied; translation canceled.", false);
+                return;
+            }
+
             var selected = Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty;
+            ownedClipboardSequence = GetClipboardSequenceNumber();
+            if (autoSelect && selected.EndsWith('\n'))
+            {
+                if (GetForegroundWindow() != sourceWindow)
+                {
+                    SetStatus("Focus changed before text could be copied; translation canceled.", false);
+                    return;
+                }
+
+                keybd_event(0x10, 0, 0, UIntPtr.Zero);
+                keybd_event(0x25, 0, 0, UIntPtr.Zero);
+                keybd_event(0x25, 0, KeyUpFlag, UIntPtr.Zero);
+                keybd_event(0x10, 0, KeyUpFlag, UIntPtr.Zero);
+                Clipboard.Clear();
+                ownedClipboardSequence = GetClipboardSequenceNumber();
+                keybd_event(0x11, 0, 0, UIntPtr.Zero);
+                keybd_event(0x43, 0, 0, UIntPtr.Zero);
+                keybd_event(0x43, 0, KeyUpFlag, UIntPtr.Zero);
+                keybd_event(0x11, 0, KeyUpFlag, UIntPtr.Zero);
+                await Task.Delay(140);
+                if (GetForegroundWindow() != sourceWindow)
+                {
+                    SetStatus("Focus changed before text could be copied; translation canceled.", false);
+                    return;
+                }
+
+                selected = Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty;
+                ownedClipboardSequence = GetClipboardSequenceNumber();
+            }
+
             if (string.IsNullOrWhiteSpace(selected))
                 throw new InvalidOperationException("No selected text found. Select a word or sentence first.");
+            ownedClipboardText = selected;
 
             var translated = await TranslateAsync(selected);
-            Clipboard.Clear();
+            if (GetForegroundWindow() != sourceWindow)
+            {
+                SetStatus("Focus changed while translating; result was not pasted.", false);
+                return;
+            }
+
+            if (GetClipboardSequenceNumber() != ownedClipboardSequence)
+            {
+                SetStatus("Clipboard changed while translating; result was not pasted.", false);
+                return;
+            }
+
             Clipboard.SetText(translated);
+            ownedClipboardSequence = GetClipboardSequenceNumber();
+            ownedClipboardText = translated;
+            if (!Clipboard.ContainsText() || Clipboard.GetText() != translated)
+            {
+                clipboardWasChanged = false;
+                SetStatus("Clipboard changed before the result could be pasted.", false);
+                return;
+            }
+
+            if (GetForegroundWindow() != sourceWindow)
+            {
+                SetStatus("Focus changed while translating; result was not pasted.", false);
+                return;
+            }
+
+            if (GetClipboardSequenceNumber() != ownedClipboardSequence)
+            {
+                SetStatus("Clipboard changed before the result could be pasted.", false);
+                return;
+            }
+
             keybd_event(0x11, 0, 0, UIntPtr.Zero);
             keybd_event(0x56, 0, 0, UIntPtr.Zero);
             keybd_event(0x56, 0, KeyUpFlag, UIntPtr.Zero);
@@ -442,12 +510,20 @@ internal sealed class MainForm : Form
             {
                 try
                 {
-                    Clipboard.Clear();
-                    if (!string.IsNullOrEmpty(previousClipboard))
-                        Clipboard.SetText(previousClipboard);
+                    var stillOwnClipboard = GetClipboardSequenceNumber() == ownedClipboardSequence;
+                    if (stillOwnClipboard && ownedClipboardText is not null)
+                        stillOwnClipboard = Clipboard.ContainsText() && Clipboard.GetText() == ownedClipboardText;
+
+                    if (stillOwnClipboard)
+                    {
+                        Clipboard.Clear();
+                        if (!string.IsNullOrEmpty(previousClipboard))
+                            Clipboard.SetText(previousClipboard);
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    SetStatus($"Could not restore the clipboard: {ex.Message}", false);
                 }
             }
 
@@ -467,8 +543,6 @@ internal sealed class MainForm : Form
 
     private async Task<string> TranslateAsync(string text)
     {
-        var cacheKey = $"{settings.Source}|{settings.Target}|{text.Trim()}";
-        lock (cacheLock) if (translationCache.TryGetValue(cacheKey, out var cached)) return cached;
         var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair={codes[settings.Source]}|{codes[settings.Target]}";
         using var response = await Http.GetAsync(url);
         var json = await response.Content.ReadAsStringAsync();
@@ -484,13 +558,7 @@ internal sealed class MainForm : Form
             throw new InvalidOperationException(isLimit ? "MyMemory daily limit reached. Try again after the service resets its quota." : $"MyMemory returned an error: {apiDetails}");
         }
         if (result?.ResponseData?.TranslatedText is not { Length: > 0 } value) throw new InvalidOperationException("The free translation service returned no translation.");
-        var translated = WebUtility.HtmlDecode(value);
-        lock (cacheLock)
-        {
-            translationCache[cacheKey] = translated;
-        }
-        SaveTranslationCache();
-        return translated;
+        return WebUtility.HtmlDecode(value);
     }
 
     private void SetStatus(string text, bool? okay) { status.Text = text; statusDot.ForeColor = okay == true ? Color.FromArgb(47, 158, 104) : okay == false ? Color.FromArgb(212, 107, 85) : Color.FromArgb(227, 166, 47); }

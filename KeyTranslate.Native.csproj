@@ -7,6 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>KeyTranslate</AssemblyName>
     <RootNamespace>KeyTranslate</RootNamespace>
+    <Version>1.1.0</Version>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon>Assets\KeyTranslate.ico</ApplicationIcon>
   </PropertyGroup>
 </Project>
