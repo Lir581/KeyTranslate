@@ -3,9 +3,11 @@
 ## Overview
  
 KeyTranslate is a Windows utility for translating text without switching applications.
+
+Current release: **v1.1.0**
  
 - Press F8 (or a custom hotkey) to translate selected text.
-- Enable Auto Translate (F7) to automatically translate text after a configurable delay while typing.
+- Enable Auto Translate (F7) to translate the current paragraph after a configurable pause while typing.
 
 ## Download and run
 
@@ -15,7 +17,7 @@ KeyTranslate is a Windows utility for translating text without switching applica
 4. Choose the source and target languages, then click **Save settings**.
 5. Select text in any app and press `F8`.
 
-Automatic translation is off by default. Toggle it with `F7`, the button in the app, or the tray menu. Set the delay from 1 to 30 seconds in the app.
+Automatic translation is off by default. Toggle it with `F7`, the button in the app, or the tray menu. Set the delay from 1 to 30 seconds in the app. Auto Translate selects the complete paragraph containing the caret, including text on wrapped lines.
 
 The release ZIP contains the application files, but not the .NET Runtime. Do not download only `KeyTranslate.exe`; keep the extracted files together.
 
